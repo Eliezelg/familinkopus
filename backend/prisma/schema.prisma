@@ -1,0 +1,484 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USERS & AUTH ====================
+
+model User {
+  id                String            @id @default(uuid())
+  email             String            @unique
+  cognitoId         String?           @unique
+  firstName         String
+  lastName          String
+  phone             String?
+  profilePicture    String?
+  language          Language          @default(EN)
+  timezone          String            @default("Asia/Jerusalem")
+  dateOfBirth       DateTime?
+  
+  // Settings
+  notificationsEnabled Boolean        @default(true)
+  emailVerified     Boolean           @default(false)
+  
+  // Relations
+  familyMemberships FamilyMember[]
+  uploadedPhotos    Photo[]
+  uploadedTexts     Text[]
+  sentInvitations   Invitation[]      @relation("InvitationSender")
+  payments          Payment[]
+  notifications     Notification[]
+  children          Child[]
+  
+  // Timestamps
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  lastLoginAt       DateTime?
+  
+  @@index([email])
+  @@index([cognitoId])
+}
+
+model Child {
+  id              String    @id @default(uuid())
+  firstName       String
+  lastName        String
+  dateOfBirth     DateTime?
+  profilePicture  String?
+  
+  // Relations
+  parent          User      @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  parentId        String
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ==================== FAMILIES ====================
+
+model Family {
+  id              String            @id @default(uuid())
+  name            String
+  description     String?
+  coverPhoto      String?
+  
+  // Settings
+  language        Language          @default(EN)
+  gazetteDay      Int               @default(15) // Day of month (1-28)
+  maxPhotosPerGazette Int           @default(28)
+  autoGenerateGazette Boolean       @default(true)
+  
+  // Relations
+  members         FamilyMember[]
+  photos          Photo[]
+  texts           Text[]
+  gazettes        Gazette[]
+  invitations     Invitation[]
+  subscription    Subscription?
+  recipients      Recipient[]
+  
+  // Timestamps
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([name])
+}
+
+model FamilyMember {
+  id              String            @id @default(uuid())
+  role            FamilyRole        @default(MEMBER)
+  joinedAt        DateTime          @default(now())
+  
+  // Relations
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  
+  // Unique constraint to prevent duplicate memberships
+  @@unique([userId, familyId])
+  @@index([familyId])
+}
+
+// ==================== CONTENT ====================
+
+model Photo {
+  id              String            @id @default(uuid())
+  originalUrl     String
+  thumbnailUrl    String
+  s3Key           String            @unique
+  caption         String?           @db.Text
+  takenAt         DateTime?
+  location        String?
+  
+  // Metadata
+  width           Int?
+  height          Int?
+  sizeInBytes     Int
+  mimeType        String
+  
+  // Gazette selection
+  selectedForGazette Boolean        @default(false)
+  gazetteOrder    Int?
+  
+  // Relations
+  uploadedBy      User              @relation(fields: [uploadedById], references: [id])
+  uploadedById    String
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  gazettes        GazetteContent[]
+  
+  // Timestamps
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([familyId])
+  @@index([uploadedById])
+  @@index([selectedForGazette])
+}
+
+model Text {
+  id              String            @id @default(uuid())
+  content         String            @db.Text
+  
+  // Relations
+  author          User              @relation(fields: [authorId], references: [id])
+  authorId        String
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  gazettes        GazetteContent[]
+  
+  // Timestamps
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([familyId])
+  @@index([authorId])
+}
+
+// ==================== GAZETTE ====================
+
+model Gazette {
+  id              String            @id @default(uuid())
+  month           Int               // 1-12
+  year            Int
+  status          GazetteStatus     @default(DRAFT)
+  pdfUrl          String?
+  s3Key           String?           @unique
+  pageCount       Int               @default(14)
+  template        String            @default("default")
+  
+  // Relations
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  contents        GazetteContent[]
+  shipments       Shipment[]
+  
+  // Timestamps
+  generatedAt     DateTime?
+  publishedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@unique([familyId, month, year])
+  @@index([familyId])
+  @@index([status])
+}
+
+model GazetteContent {
+  id              String            @id @default(uuid())
+  pageNumber      Int
+  position        Int               // Position on page
+  
+  // Relations
+  gazette         Gazette           @relation(fields: [gazetteId], references: [id], onDelete: Cascade)
+  gazetteId       String
+  photo           Photo?            @relation(fields: [photoId], references: [id])
+  photoId         String?
+  text            Text?             @relation(fields: [textId], references: [id])
+  textId          String?
+  
+  @@unique([gazetteId, pageNumber, position])
+  @@index([gazetteId])
+}
+
+// ==================== RECIPIENTS & SHIPPING ====================
+
+model Recipient {
+  id              String            @id @default(uuid())
+  firstName       String
+  lastName        String
+  addressLine1    String
+  addressLine2    String?
+  city            String
+  postalCode      String
+  country         String            @default("IL")
+  phone           String?
+  
+  // Status
+  isActive        Boolean           @default(true)
+  temporaryPauseUntil DateTime?
+  
+  // Relations
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  shipments       Shipment[]
+  
+  // Timestamps
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([familyId])
+}
+
+model Shipment {
+  id              String            @id @default(uuid())
+  trackingNumber  String?
+  status          ShipmentStatus    @default(PENDING)
+  shippingMethod  ShippingMethod    @default(STANDARD)
+  cost            Decimal           @db.Decimal(10, 2)
+  
+  // Relations
+  gazette         Gazette           @relation(fields: [gazetteId], references: [id])
+  gazetteId       String
+  recipient       Recipient         @relation(fields: [recipientId], references: [id])
+  recipientId     String
+  
+  // Timestamps
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([gazetteId])
+  @@index([recipientId])
+  @@index([status])
+}
+
+// ==================== SUBSCRIPTIONS & PAYMENTS ====================
+
+model Subscription {
+  id              String            @id @default(uuid())
+  status          SubscriptionStatus @default(ACTIVE)
+  plan            SubscriptionPlan  @default(MONTHLY)
+  pricePerMonth   Decimal           @db.Decimal(10, 2) @default(70.00)
+  currency        String            @default("ILS")
+  
+  // Promo code
+  promoCode       PromoCode?        @relation(fields: [promoCodeId], references: [id])
+  promoCodeId     String?
+  discountedPrice Decimal?          @db.Decimal(10, 2)
+  
+  // External provider
+  zcreditCustomerId String?         @unique
+  stripeCustomerId  String?         @unique
+  
+  // Relations
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String            @unique
+  payments        Payment[]
+  
+  // Timestamps
+  startDate       DateTime          @default(now())
+  endDate         DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([status])
+  @@index([familyId])
+}
+
+model Payment {
+  id              String            @id @default(uuid())
+  amount          Decimal           @db.Decimal(10, 2)
+  currency        String            @default("ILS")
+  status          PaymentStatus     @default(PENDING)
+  provider        PaymentProvider   @default(ZCREDIT)
+  transactionId   String?           @unique
+  
+  // Relations
+  subscription    Subscription      @relation(fields: [subscriptionId], references: [id])
+  subscriptionId  String
+  user            User              @relation(fields: [userId], references: [id])
+  userId          String
+  
+  // Timestamps
+  paidAt          DateTime?
+  failedAt        DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([subscriptionId])
+  @@index([userId])
+  @@index([status])
+}
+
+model PromoCode {
+  id              String            @id @default(uuid())
+  code            String            @unique
+  description     String?
+  discountType    DiscountType      @default(FIXED)
+  discountValue   Decimal           @db.Decimal(10, 2)
+  isActive        Boolean           @default(true)
+  maxUses         Int?
+  currentUses     Int               @default(0)
+  
+  // Validity
+  validFrom       DateTime          @default(now())
+  validUntil      DateTime?
+  
+  // Relations
+  subscriptions   Subscription[]
+  
+  // Timestamps
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([code])
+  @@index([isActive])
+}
+
+// ==================== COMMUNICATIONS ====================
+
+model Invitation {
+  id              String            @id @default(uuid())
+  email           String
+  token           String            @unique
+  status          InvitationStatus  @default(PENDING)
+  role            FamilyRole        @default(MEMBER)
+  
+  // Relations
+  family          Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  familyId        String
+  invitedBy       User              @relation("InvitationSender", fields: [invitedById], references: [id])
+  invitedById     String
+  
+  // Timestamps
+  sentAt          DateTime          @default(now())
+  acceptedAt      DateTime?
+  expiresAt       DateTime
+  
+  @@index([email])
+  @@index([token])
+  @@index([familyId])
+}
+
+model Notification {
+  id              String            @id @default(uuid())
+  type            NotificationType
+  title           String
+  message         String            @db.Text
+  data            Json?
+  isRead          Boolean           @default(false)
+  
+  // Relations
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  
+  // Timestamps
+  readAt          DateTime?
+  createdAt       DateTime          @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([type])
+}
+
+// ==================== ENUMS ====================
+
+enum Language {
+  EN
+  HE
+  FR
+  ES
+  AR
+  RU
+  DE
+  PT
+}
+
+enum FamilyRole {
+  ADMIN
+  MEMBER
+}
+
+enum GazetteStatus {
+  DRAFT
+  PROCESSING
+  READY
+  SENT
+  FAILED
+}
+
+enum ShipmentStatus {
+  PENDING
+  PRINTING
+  SHIPPED
+  DELIVERED
+  RETURNED
+  FAILED
+}
+
+enum ShippingMethod {
+  STANDARD
+  EXPRESS
+  PRIORITY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+  PAST_DUE
+}
+
+enum SubscriptionPlan {
+  MONTHLY
+  YEARLY
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  ZCREDIT
+  STRIPE
+  PAYPAL
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum NotificationType {
+  GAZETTE_READY
+  GAZETTE_SENT
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  MEMBER_JOINED
+  PHOTO_UPLOADED
+  INVITATION_RECEIVED
+  SUBSCRIPTION_EXPIRING
+  GENERAL
+}
