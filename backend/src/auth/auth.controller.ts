@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, UseGuards, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, RefreshTokenDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, RefreshTokenDto, ConfirmSignUpDto, ResendConfirmationDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/types';
 
@@ -11,6 +11,16 @@ export class AuthController {
   @Post('register')
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
+  }
+
+  @Post('confirm-signup')
+  confirmSignUp(@Body() confirmSignUpDto: ConfirmSignUpDto) {
+    return this.authService.confirmSignUp(confirmSignUpDto);
+  }
+
+  @Post('resend-confirmation')
+  resendConfirmation(@Body() resendConfirmationDto: ResendConfirmationDto) {
+    return this.authService.resendConfirmationCode(resendConfirmationDto);
   }
 
   @Post('login')

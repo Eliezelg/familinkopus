@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { CognitoService } from './cognito.service';
-import { RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, RefreshTokenDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, RefreshTokenDto, ConfirmSignUpDto, ResendConfirmationDto } from './dto/auth.dto';
 import { Language } from '../common/enums';
 
 @Injectable()
@@ -27,7 +27,7 @@ export class AuthService {
 
     try {
       // Enregistrer l'utilisateur dans Cognito
-      await this.cognitoService.registerUser(
+      const cognitoResult = await this.cognitoService.registerUser(
         registerDto.email,
         registerDto.password,
         {
@@ -37,24 +37,69 @@ export class AuthService {
         },
       );
 
-      // Créer l'utilisateur dans la base de données
+      // Créer l'utilisateur dans la base de données avec le nom d'utilisateur Cognito
       const user = await this.prisma.user.create({
         data: {
           email: registerDto.email,
           firstName: registerDto.firstName,
           lastName: registerDto.lastName,
           language: registerDto.language || Language.FR,
+          cognitoUsername: cognitoResult.Username,
+          cognitoId: cognitoResult.UserSub,
         },
       });
 
       return {
         message: 'Utilisateur créé avec succès. Veuillez vérifier votre email pour confirmer votre compte.',
         userId: user.id,
+        cognitoUsername: cognitoResult.Username, // Retourner le username pour la confirmation
       };
     } catch (error) {
       // Gérer les erreurs spécifiques à Cognito
       if (error.name === 'UsernameExistsException') {
         throw new ConflictException('Un utilisateur avec cet email existe déjà');
+      }
+      throw error;
+    }
+  }
+
+  async confirmSignUp(confirmSignUpDto: ConfirmSignUpDto) {
+    try {
+      await this.cognitoService.confirmSignUp(
+        confirmSignUpDto.username,
+        confirmSignUpDto.confirmationCode,
+      );
+
+      // Mettre à jour l'utilisateur comme vérifié
+      await this.prisma.user.update({
+        where: { cognitoUsername: confirmSignUpDto.username },
+        data: { emailVerified: true },
+      });
+
+      return {
+        message: 'Email confirmé avec succès. Vous pouvez maintenant vous connecter.',
+      };
+    } catch (error) {
+      if (error.name === 'CodeMismatchException') {
+        throw new UnauthorizedException('Code de confirmation invalide');
+      }
+      if (error.name === 'ExpiredCodeException') {
+        throw new UnauthorizedException('Le code de confirmation a expiré');
+      }
+      throw error;
+    }
+  }
+
+  async resendConfirmationCode(resendConfirmationDto: ResendConfirmationDto) {
+    try {
+      await this.cognitoService.resendConfirmationCode(resendConfirmationDto.username);
+      
+      return {
+        message: 'Un nouveau code de confirmation a été envoyé à votre email.',
+      };
+    } catch (error) {
+      if (error.name === 'UserNotFoundException') {
+        throw new NotFoundException('Utilisateur non trouvé');
       }
       throw error;
     }

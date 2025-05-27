@@ -16,6 +16,7 @@ model User {
   id                String            @id @default(uuid())
   email             String            @unique
   cognitoId         String?           @unique
+  cognitoUsername   String?           @unique
   firstName         String
   lastName          String
   phone             String?
@@ -44,6 +45,7 @@ model User {
   
   @@index([email])
   @@index([cognitoId])
+  @@index([cognitoUsername])
 }
 
 model Child {
